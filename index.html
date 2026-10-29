@@ -1,0 +1,867 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Manga Stock Barcode Scanner</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: {
+                            50: '#eef2ff',
+                            100: '#e0e7ff',
+                            500: '#6366f1',
+                            600: '#4f46e5',
+                            700: '#4338ca',
+                            900: '#312e81',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- HTML5-QRCode Library for stable mobile camera & barcode detection -->
+    <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+    <style>
+        /* Custom scrollbar for inventory table */
+        ::-webkit-scrollbar {
+            width: 6px;
+            height: 6px;
+        }
+        ::-webkit-scrollbar-track {
+            background: #1f2937;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #374151;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #4b5563;
+        }
+        .scan-laser {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background-color: #ef4444;
+            box-shadow: 0 0 12px 2px #ef4444;
+            animation: scan 2s infinite ease-in-out;
+        }
+        @keyframes scan {
+            0% { top: 5%; opacity: 0.8; }
+            50% { top: 95%; opacity: 1; }
+            100% { top: 5%; opacity: 0.8; }
+        }
+        /* Style fixes for html5-qrcode video container */
+        #reader video {
+            object-fit: cover !important;
+            width: 100% !important;
+            height: 100% !important;
+            border-radius: 0.75rem;
+        }
+        #reader {
+            border: none !important;
+        }
+    </style>
+</head>
+<body class="bg-slate-900 text-slate-100 min-h-screen font-sans flex flex-col antialiased overflow-x-hidden">
+
+    <!-- Header -->
+    <header class="bg-slate-800 border-b border-slate-700 sticky top-0 z-30 shadow-md">
+        <div class="max-w-7xl mx-auto px-3 sm:px-4 py-2.5 sm:py-3 flex items-center justify-between gap-2">
+            <div class="flex items-center gap-2 sm:gap-3 min-w-0">
+                <div class="bg-indigo-600 p-2 rounded-xl text-white shadow-lg shrink-0">
+                    <i class="fa-solid fa-barcode text-lg sm:text-xl"></i>
+                </div>
+                <div class="min-w-0">
+                    <h1 class="font-bold text-base sm:text-lg leading-tight text-white flex items-center gap-1.5 truncate">
+                        MangaScan <span class="bg-indigo-500/20 text-indigo-400 text-[10px] sm:text-xs px-2 py-0.5 rounded-full font-mono">v1.3</span>
+                    </h1>
+                    <p class="text-[10px] sm:text-xs text-slate-400 truncate">High-Speed POS Scanner</p>
+                </div>
+            </div>
+
+            <!-- Header Action Indicators -->
+            <div class="flex items-center gap-2 shrink-0">
+                <!-- Sync Status Pill -->
+                <div id="syncStatusBadge" class="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs bg-slate-700 text-slate-300 border border-slate-600">
+                    <span class="w-2 h-2 rounded-full bg-yellow-400 animate-pulse" id="statusDot"></span>
+                    <span id="statusText">Ready</span>
+                </div>
+
+                <button id="openSettingsBtn" class="p-2 bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-200 transition-colors relative" title="Google Sheets Config">
+                    <i class="fa-solid fa-gear"></i>
+                    <span id="configIndicator" class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-slate-800"></span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Container -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-4 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6 box-border">
+
+        <!-- Left Column: Camera Scanner & Manual Input (5 Cols) -->
+        <section class="lg:col-span-5 flex flex-col gap-4 sm:gap-5 w-full min-w-0">
+
+            <!-- Scanner Box -->
+            <div class="bg-slate-800 rounded-2xl p-3 sm:p-4 border border-slate-700 shadow-xl flex flex-col gap-3 sm:gap-4 w-full box-border">
+                <div class="flex items-center justify-between flex-wrap gap-2">
+                    <div class="flex items-center gap-2">
+                        <i class="fa-solid fa-camera text-indigo-400"></i>
+                        <h2 class="font-semibold text-slate-200 text-sm sm:text-base">Continuous Scanner</h2>
+                    </div>
+                    <!-- Sound Toggle -->
+                    <button id="audioToggleBtn" class="px-2.5 py-1 text-xs bg-slate-700 hover:bg-slate-600 rounded-lg text-slate-300 flex items-center gap-1.5 transition ml-auto">
+                        <i class="fa-solid fa-volume-high text-emerald-400" id="audioIcon"></i> Sound
+                    </button>
+                </div>
+
+                <!-- Video Viewport -->
+                <div class="relative bg-black rounded-xl overflow-hidden min-h-[220px] aspect-video flex items-center justify-center border border-slate-700 shadow-inner w-full">
+                    
+                    <!-- Html5QRCode Scanner Target Container -->
+                    <div id="reader" class="w-full h-full"></div>
+                    
+                    <!-- Scanner Laser HUD overlay -->
+                    <div id="scannerOverlay" class="absolute inset-0 pointer-events-none hidden">
+                        <div class="scan-laser"></div>
+                        <div class="absolute inset-0 border-2 border-indigo-500/30 rounded-xl m-2 sm:m-4"></div>
+                        <div class="absolute bottom-2 left-2 right-2 text-center bg-slate-900/80 backdrop-blur-md py-1 px-2 rounded text-[11px] text-indigo-300 font-mono">
+                            Auto-Detecting Barcode / ISBN...
+                        </div>
+                    </div>
+
+                    <!-- Placeholder when camera is off -->
+                    <div id="cameraPlaceholder" class="absolute inset-0 flex flex-col items-center justify-center p-3 sm:p-4 text-center gap-2 bg-slate-950/95 z-10 overflow-y-auto">
+                        <div class="w-10 h-10 rounded-full bg-slate-800 flex items-center justify-center text-slate-400 shrink-0">
+                            <i class="fa-solid fa-camera text-base"></i>
+                        </div>
+                        <p class="text-xs text-slate-300 max-w-xs leading-snug">
+                            Tap below to enable camera access for continuous barcode scanning.
+                        </p>
+                        
+                        <!-- Permission Error / Alert Message -->
+                        <div id="cameraErrorBox" class="hidden text-[11px] bg-red-500/20 border border-red-500/40 text-red-300 p-2 rounded-xl max-w-xs text-left leading-tight">
+                            <i class="fa-solid fa-triangle-exclamation mr-1 text-red-400"></i>
+                            <span id="cameraErrorMsg">Camera permission blocked or unavailable.</span>
+                        </div>
+
+                        <div class="flex flex-col gap-2 w-full max-w-xs mt-1">
+                            <button id="requestPermBtn" class="w-full py-2.5 px-3 bg-emerald-600 hover:bg-emerald-500 text-white font-semibold rounded-xl text-xs shadow-lg transition flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-shield-halved"></i> Request Camera Permission
+                            </button>
+                            <button id="startCamBtn" class="w-full py-2.5 px-3 bg-indigo-600 hover:bg-indigo-500 text-white font-semibold rounded-xl text-xs shadow-lg transition flex items-center justify-center gap-2">
+                                <i class="fa-solid fa-play"></i> Start Camera Scanner
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Camera Controls Stacked for Mobile -->
+                <div class="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-2 w-full">
+                    <select id="cameraSelect" class="w-full sm:w-1/2 bg-slate-700 text-slate-200 border border-slate-600 rounded-xl text-xs p-2.5 focus:ring-2 focus:ring-indigo-500 outline-none truncate">
+                        <option value="">Detecting Cameras...</option>
+                    </select>
+                    <button id="stopCamBtn" disabled class="w-full sm:w-1/2 py-2.5 px-3 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-semibold transition disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center gap-1.5">
+                        <i class="fa-solid fa-stop"></i> Stop Camera
+                    </button>
+                </div>
+            </div>
+
+            <!-- Quick Manual Entry -->
+            <div class="bg-slate-800 rounded-2xl p-3 sm:p-4 border border-slate-700 shadow-xl flex flex-col gap-2.5 sm:gap-3 w-full box-border">
+                <h2 class="font-semibold text-slate-200 text-xs sm:text-sm flex items-center gap-2">
+                    <i class="fa-solid fa-keyboard text-indigo-400"></i> Manual / USB Scanner Entry
+                </h2>
+                <form id="manualScanForm" class="flex flex-col gap-2">
+                    <input type="text" id="manualCodeInput" autocomplete="off" placeholder="Scan or type Barcode / ISBN..." 
+                        class="w-full bg-slate-900 border border-slate-700 rounded-xl px-3 py-2.5 text-xs sm:text-sm text-slate-100 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 font-mono box-border">
+                    <button type="submit" class="w-full bg-indigo-600 hover:bg-indigo-500 text-white font-semibold py-2.5 px-4 rounded-xl text-xs sm:text-sm transition flex items-center justify-center gap-2 shadow-lg">
+                        <i class="fa-solid fa-plus"></i> Add Scan
+                    </button>
+                </form>
+                <p class="text-[10px] sm:text-[11px] text-slate-400 leading-tight">Supports handheld physical USB/Bluetooth barcode scanners.</p>
+            </div>
+
+            <!-- Recent Scan Alert Banner -->
+            <div id="recentScanBanner" class="hidden bg-emerald-500/10 border border-emerald-500/30 rounded-2xl p-3 sm:p-4 flex items-center gap-3 animate-pulse">
+                <div class="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0">
+                    <i class="fa-solid fa-check text-base sm:text-lg"></i>
+                </div>
+                <div class="min-w-0 flex-1">
+                    <div class="text-[10px] text-emerald-400 font-semibold uppercase tracking-wider">Last Scanned Item</div>
+                    <div id="bannerTitle" class="text-xs sm:text-sm font-bold text-slate-100 truncate">--</div>
+                    <div class="text-[11px] text-slate-400 font-mono truncate" id="bannerCode">--</div>
+                </div>
+                <div id="bannerQty" class="shrink-0 text-sm sm:text-base font-bold text-emerald-400 bg-emerald-500/20 px-2.5 py-1 rounded-lg">
+                    +1
+                </div>
+            </div>
+
+        </section>
+
+        <!-- Right Column: Inventory List & Actions (7 Cols) -->
+        <section class="lg:col-span-7 flex flex-col gap-5 w-full min-w-0">
+
+            <div class="bg-slate-800 rounded-2xl border border-slate-700 shadow-xl flex flex-col flex-1 overflow-hidden w-full">
+                
+                <!-- Table Header Controls -->
+                <div class="p-3 sm:p-4 border-b border-slate-700 flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 bg-slate-800/80">
+                    <div>
+                        <h2 class="font-bold text-slate-100 text-base sm:text-lg flex items-center gap-2 flex-wrap">
+                            Scanned Inventory
+                            <span id="totalBooksCount" class="bg-indigo-500/20 text-indigo-400 text-xs px-2.5 py-0.5 rounded-full font-bold">0 Total</span>
+                        </h2>
+                        <p class="text-[11px] sm:text-xs text-slate-400">Auto-incrementing real-time stock batch</p>
+                    </div>
+
+                    <!-- Responsive Action Buttons Grid -->
+                    <div class="grid grid-cols-3 sm:flex items-center gap-2 w-full sm:w-auto">
+                        <button id="syncNowBtn" class="col-span-1 px-3 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5 shadow-md">
+                            <i class="fa-solid fa-cloud-arrow-up"></i> Sync
+                        </button>
+                        <button id="exportCsvBtn" class="col-span-1 px-3 py-2 bg-slate-700 hover:bg-slate-600 text-slate-200 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-file-csv"></i> CSV
+                        </button>
+                        <button id="clearListBtn" class="col-span-1 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/30 rounded-xl text-xs font-semibold transition flex items-center justify-center gap-1.5">
+                            <i class="fa-solid fa-trash"></i> Clear
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Table Content Container -->
+                <div class="flex-1 overflow-x-auto overflow-y-auto max-h-[400px] lg:max-h-none">
+                    <table class="w-full text-left text-xs border-collapse min-w-[340px]">
+                        <thead class="bg-slate-900/60 text-slate-400 font-semibold uppercase sticky top-0 backdrop-blur-md z-10">
+                            <tr>
+                                <th class="p-2.5 sm:p-3 border-b border-slate-700">Barcode</th>
+                                <th class="p-2.5 sm:p-3 border-b border-slate-700">Manga Title</th>
+                                <th class="p-2.5 sm:p-3 border-b border-slate-700 text-center">Qty</th>
+                                <th class="p-2.5 sm:p-3 border-b border-slate-700 text-right">Time</th>
+                                <th class="p-2.5 sm:p-3 border-b border-slate-700 text-center">Del</th>
+                            </tr>
+                        </thead>
+                        <tbody id="inventoryTableBody" class="divide-y divide-slate-700/50">
+                            <!-- Rows dynamically populated -->
+                        </tbody>
+                    </table>
+
+                    <!-- Empty State -->
+                    <div id="emptyState" class="p-8 sm:p-12 text-center flex flex-col items-center justify-center gap-2.5">
+                        <div class="w-12 h-12 rounded-full bg-slate-700/50 flex items-center justify-center text-slate-500 text-xl">
+                            <i class="fa-solid fa-book-open"></i>
+                        </div>
+                        <p class="text-slate-400 text-xs sm:text-sm font-medium">No items scanned in this session yet.</p>
+                        <p class="text-slate-500 text-[11px] max-w-xs">Scan barcodes via camera or input field to build your batch.</p>
+                    </div>
+                </div>
+
+                <!-- Footer Bar -->
+                <div class="p-3 bg-slate-900/40 border-t border-slate-700 text-[11px] text-slate-400 flex justify-between items-center flex-wrap gap-2">
+                    <span id="uniqueCount">Unique Titles: 0</span>
+                    <span id="lastSyncedTime">Last Sync: Never</span>
+                </div>
+            </div>
+
+        </section>
+
+    </main>
+
+    <!-- Google Sheets Settings Modal -->
+    <div id="settingsModal" class="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-3 sm:p-4 hidden">
+        <div class="bg-slate-800 border border-slate-700 rounded-2xl max-w-lg w-full p-4 sm:p-6 shadow-2xl flex flex-col gap-4 max-h-[90vh] overflow-y-auto">
+            <div class="flex items-center justify-between border-b border-slate-700 pb-3">
+                <h3 class="font-bold text-slate-100 text-sm sm:text-base flex items-center gap-2">
+                    <i class="fa-solid fa-file-excel text-emerald-400"></i> Google Sheets Integration
+                </h3>
+                <button id="closeSettingsBtn" class="text-slate-400 hover:text-slate-200">
+                    <i class="fa-solid fa-xmark text-lg"></i>
+                </button>
+            </div>
+
+            <div class="flex flex-col gap-3 text-xs">
+                <label class="font-medium text-slate-300">Apps Script Web App Endpoint URL</label>
+                <input type="text" id="endpointUrlInput" placeholder="https://script.google.com/macros/s/.../exec" 
+                    class="bg-slate-900 border border-slate-700 rounded-xl p-2.5 text-slate-100 font-mono focus:border-indigo-500 outline-none w-full box-border">
+                
+                <p class="text-slate-400 leading-relaxed">
+                    Paste your deployed Google Apps Script Web App URL to enable automated direct sync.
+                </p>
+
+                <!-- Code Accordion / Instructions -->
+                <details class="bg-slate-900 border border-slate-700 rounded-xl p-3 text-slate-300">
+                    <summary class="cursor-pointer font-semibold text-indigo-400 hover:underline">
+                        How to setup your Google Sheet (Script Code)
+                    </summary>
+                    <div class="mt-2 text-[11px] space-y-2 text-slate-400">
+                        <ol class="list-decimal pl-4 space-y-1">
+                            <li>Open Google Sheet & go to <b>Extensions > Apps Script</b>.</li>
+                            <li>Paste the code snippet below into <code class="text-slate-200">Code.gs</code>.</li>
+                            <li>Click <b>Deploy > New deployment</b>.</li>
+                            <li>Select type: <b>Web app</b>. Set Access: <b>Anyone</b>.</li>
+                            <li>Deploy and copy the Web App URL into this box!</li>
+                        </ol>
+                        <textarea readonly class="w-full h-28 bg-slate-950 p-2 font-mono text-[10px] text-emerald-400 rounded border border-slate-800 outline-none select-all" onclick="this.select()">
+function doPost(e) {
+  var sheet = SpreadsheetApp.getActiveSpreadsheet().getActiveSheet();
+  var data = JSON.parse(e.postData.contents);
+  if (sheet.getLastRow() === 0) {
+    sheet.appendRow(["Barcode", "Title", "Quantity", "Last Scanned Time"]);
+  }
+  var items = data.items;
+  var rows = sheet.getDataRange().getValues();
+  items.forEach(function(item) {
+    var found = false;
+    for (var i = 1; i < rows.length; i++) {
+      if (rows[i][0].toString() === item.barcode.toString()) {
+        var currentQty = Number(rows[i][2]) || 0;
+        sheet.getRange(i + 1, 3).setValue(currentQty + item.quantity);
+        sheet.getRange(i + 1, 4).setValue(item.lastScanned);
+        found = true;
+        break;
+      }
+    }
+    if (!found) {
+      sheet.appendRow([item.barcode, item.title, item.quantity, item.lastScanned]);
+    }
+  });
+  return ContentService.createTextOutput(JSON.stringify({"result": "success"})).setMimeType(ContentService.MimeType.JSON);
+}
+                        </textarea>
+                    </div>
+                </details>
+            </div>
+
+            <div class="flex justify-end gap-2 border-t border-slate-700 pt-3">
+                <button id="saveSettingsBtn" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-semibold px-4 py-2 rounded-xl transition">
+                    Save Configuration
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Notification Toast -->
+    <div id="toast" class="fixed bottom-4 right-4 bg-slate-800 text-slate-100 border border-slate-700 px-3.5 py-2.5 rounded-xl shadow-2xl flex items-center gap-2.5 transition-all duration-300 transform translate-y-20 opacity-0 pointer-events-none z-50 text-xs">
+        <i id="toastIcon" class="fa-solid fa-circle-info text-indigo-400"></i>
+        <span id="toastMsg" class="font-medium">Notification</span>
+    </div>
+
+    <!-- Application Script Logic -->
+    <script>
+        // State Storage
+        let inventory = [];
+        let endpointUrl = localStorage.getItem('manga_scanner_endpoint') || '';
+        let audioEnabled = true;
+        let html5QrCode = null;
+        let isScanning = false;
+        let lastScannedCode = null;
+        let lastScanTimestamp = 0;
+        let activeStream = null;
+
+        // Web Audio API Beep Generator
+        const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        function playBeepSound() {
+            if (!audioEnabled) return;
+            try {
+                if (audioCtx.state === 'suspended') {
+                    audioCtx.resume();
+                }
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 0.15);
+                osc.connect(gain);
+                gain.connect(audioCtx.destination);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.15);
+            } catch (e) {
+                console.warn('Audio play error', e);
+            }
+        }
+
+        // DOM Element Selectors
+        const scannerOverlay = document.getElementById('scannerOverlay');
+        const cameraPlaceholder = document.getElementById('cameraPlaceholder');
+        const startCamBtn = document.getElementById('startCamBtn');
+        const requestPermBtn = document.getElementById('requestPermBtn');
+        const cameraErrorBox = document.getElementById('cameraErrorBox');
+        const cameraErrorMsg = document.getElementById('cameraErrorMsg');
+        const stopCamBtn = document.getElementById('stopCamBtn');
+        const cameraSelect = document.getElementById('cameraSelect');
+        const manualForm = document.getElementById('manualScanForm');
+        const manualInput = document.getElementById('manualCodeInput');
+        const inventoryTable = document.getElementById('inventoryTableBody');
+        const emptyState = document.getElementById('emptyState');
+        const totalBooksCount = document.getElementById('totalBooksCount');
+        const uniqueCount = document.getElementById('uniqueCount');
+        const lastSyncedTime = document.getElementById('lastSyncedTime');
+        const recentBanner = document.getElementById('recentScanBanner');
+        const bannerTitle = document.getElementById('bannerTitle');
+        const bannerCode = document.getElementById('bannerCode');
+        const settingsModal = document.getElementById('settingsModal');
+        const openSettingsBtn = document.getElementById('openSettingsBtn');
+        const closeSettingsBtn = document.getElementById('closeSettingsBtn');
+        const saveSettingsBtn = document.getElementById('saveSettingsBtn');
+        const endpointUrlInput = document.getElementById('endpointUrlInput');
+        const configIndicator = document.getElementById('configIndicator');
+        const syncStatusBadge = document.getElementById('syncStatusBadge');
+        const statusText = document.getElementById('statusText');
+        const statusDot = document.getElementById('statusDot');
+        const audioToggleBtn = document.getElementById('audioToggleBtn');
+        const audioIcon = document.getElementById('audioIcon');
+        const syncNowBtn = document.getElementById('syncNowBtn');
+        const exportCsvBtn = document.getElementById('exportCsvBtn');
+        const clearListBtn = document.getElementById('clearListBtn');
+
+        // Initialization
+        window.addEventListener('DOMContentLoaded', () => {
+            loadSavedInventory();
+            updateConfigIndicator();
+            initCameraSelection();
+            
+            // Auto focus manual input for handheld hardware scanners
+            manualInput.focus();
+        });
+
+        // Config Indicator updates
+        function updateConfigIndicator() {
+            if (endpointUrl.trim() !== '') {
+                configIndicator.classList.remove('bg-red-500');
+                configIndicator.classList.add('bg-emerald-500');
+                syncStatusBadge.classList.remove('hidden');
+                endpointUrlInput.value = endpointUrl;
+            } else {
+                configIndicator.classList.remove('bg-emerald-500');
+                configIndicator.classList.add('bg-red-500');
+            }
+        }
+
+        // Direct getUserMedia Helper for Iframe / Mobile Permission Popups
+        async function requestRawCameraPermission() {
+    cameraErrorBox.classList.add('hidden');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showCameraError("Your browser does not support camera access.");
+        return false;
+    }
+            const constraintsList = [
+                { video: { facingMode: { exact: "environment" } } },
+                { video: { facingMode: "environment" } },
+                { video: true }
+            ];
+
+            for (let constraints of constraintsList) {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    activeStream = stream;
+                    // Stop stream immediately so Html5Qrcode can claim the video device
+                    stream.getTracks().forEach(track => track.stop());
+                    showToast("Camera permission granted!", "success");
+                    await initCameraSelection();
+                    return true;
+                } catch (err) {
+                    console.warn("Constraint attempt failed:", constraints, err);
+                }
+            }
+
+            showCameraError("Permission denied or Google Sites iframe blocking camera. Make sure iframe embed has allow='camera' attribute.");
+            return false;
+        }
+
+        function showCameraError(msg) {
+            cameraErrorMsg.textContent = msg;
+            cameraErrorBox.classList.remove('hidden');
+        }
+
+        requestPermBtn.addEventListener('click', async () => {
+            await requestRawCameraPermission();
+        });
+
+        // Fetch Manga Title by ISBN/Barcode
+        async function fetchBookTitle(barcode) {
+            try {
+                const res = await fetch(`https://openlibrary.org/api/books?bibkeys=ISBN:${barcode}&format=json&jscmd=data`);
+                const data = await res.json();
+                if (data[`ISBN:${barcode}`]) {
+                    return data[`ISBN:${barcode}`].title;
+                }
+                
+                const gRes = await fetch(`https://www.googleapis.com/books/v1/volumes?q=isbn:${barcode}`);
+                const gData = await gRes.json();
+                if (gData.items && gData.items.length > 0) {
+                    return gData.items[0].volumeInfo.title;
+                }
+            } catch (err) {
+                console.warn("Title lookup failed", err);
+            }
+            return `Manga Item (${barcode})`;
+        }
+
+        // Core Barcode Process Handler
+        async function handleScannedBarcode(rawBarcode) {
+            const barcode = rawBarcode.trim();
+            if (!barcode) return;
+
+            const now = Date.now();
+            if (barcode === lastScannedCode && (now - lastScanTimestamp) < 1200) {
+                return;
+            }
+            lastScannedCode = barcode;
+            lastScanTimestamp = now;
+
+            playBeepSound();
+
+            let existing = inventory.find(item => item.barcode === barcode);
+            const timeStr = new Date().toLocaleTimeString();
+
+            if (existing) {
+                existing.quantity += 1;
+                existing.lastScanned = timeStr;
+                showRecentBanner(existing.title, existing.barcode, existing.quantity);
+                showToast(`Incremented Qty for "${existing.title}"`, 'success');
+            } else {
+                const title = await fetchBookTitle(barcode);
+                inventory.unshift({
+                    barcode: barcode,
+                    title: title,
+                    quantity: 1,
+                    lastScanned: timeStr
+                });
+                showRecentBanner(title, barcode, 1);
+                showToast(`Added New Book: ${title}`, 'info');
+            }
+
+            saveInventory();
+            renderInventoryTable();
+        }
+
+        // Banner UI Display
+        function showRecentBanner(title, code, qty) {
+            bannerTitle.textContent = title;
+            bannerCode.textContent = code;
+            document.getElementById('bannerQty').textContent = `Qty: ${qty}`;
+            recentBanner.classList.remove('hidden');
+        }
+
+        // Inventory Table Render
+        function renderInventoryTable() {
+            inventoryTable.innerHTML = '';
+
+            if (inventory.length === 0) {
+                emptyState.classList.remove('hidden');
+            } else {
+                emptyState.classList.add('hidden');
+                inventory.forEach((item, index) => {
+                    const tr = document.createElement('tr');
+                    tr.className = "hover:bg-slate-700/30 transition-colors";
+                    tr.innerHTML = `
+                        <td class="p-2.5 sm:p-3 font-mono text-indigo-300 font-semibold text-[11px] sm:text-xs">${escapeHtml(item.barcode)}</td>
+                        <td class="p-2.5 sm:p-3 font-medium text-slate-200 max-w-[120px] sm:max-w-xs truncate">${escapeHtml(item.title)}</td>
+                        <td class="p-2.5 sm:p-3 text-center">
+                            <div class="inline-flex items-center gap-1.5 bg-slate-900 border border-slate-700 rounded-lg px-1.5 py-0.5">
+                                <button onclick="adjustQty(${index}, -1)" class="text-slate-400 hover:text-red-400 font-bold px-1 text-xs">-</button>
+                                <span class="font-bold text-slate-100 min-w-[16px] text-center text-xs">${item.quantity}</span>
+                                <button onclick="adjustQty(${index}, 1)" class="text-slate-400 hover:text-emerald-400 font-bold px-1 text-xs">+</button>
+                            </div>
+                        </td>
+                        <td class="p-2.5 sm:p-3 text-right text-slate-400 font-mono text-[10px] sm:text-[11px]">${item.lastScanned}</td>
+                        <td class="p-2.5 sm:p-3 text-center">
+                            <button onclick="removeItem(${index})" class="text-slate-500 hover:text-red-400 transition p-1">
+                                <i class="fa-solid fa-xmark"></i>
+                            </button>
+                        </td>
+                    `;
+                    inventoryTable.appendChild(tr);
+                });
+            }
+
+            const totalQty = inventory.reduce((acc, curr) => acc + curr.quantity, 0);
+            totalBooksCount.textContent = `${totalQty} Total`;
+            uniqueCount.textContent = `Unique Titles: ${inventory.length}`;
+        }
+
+        window.adjustQty = function(index, change) {
+            if (inventory[index]) {
+                inventory[index].quantity += change;
+                if (inventory[index].quantity <= 0) {
+                    inventory.splice(index, 1);
+                } else {
+                    inventory[index].lastScanned = new Date().toLocaleTimeString();
+                }
+                saveInventory();
+                renderInventoryTable();
+            }
+        };
+
+        window.removeItem = function(index) {
+            inventory.splice(index, 1);
+            saveInventory();
+            renderInventoryTable();
+        };
+
+        function saveInventory() {
+            localStorage.setItem('manga_inventory_items', JSON.stringify(inventory));
+        }
+
+        function loadSavedInventory() {
+            const raw = localStorage.getItem('manga_inventory_items');
+            if (raw) {
+                try {
+                    inventory = JSON.parse(raw);
+                } catch(e) {
+                    inventory = [];
+                }
+            }
+            renderInventoryTable();
+        }
+
+        // Robust Html5Qrcode Initialization & Camera Enum
+        async function initCameraSelection() {
+            try {
+                const devices = await Html5Qrcode.getCameras();
+                cameraSelect.innerHTML = '';
+                if (devices && devices.length) {
+                    devices.forEach((device, index) => {
+                        const option = document.createElement('option');
+                        option.value = device.id;
+                        option.text = device.label || `Camera ${index + 1}`;
+                        cameraSelect.appendChild(option);
+                    });
+                    
+                    const backCam = devices.find(d => 
+                        d.label.toLowerCase().includes('back') || 
+                        d.label.toLowerCase().includes('environment') || 
+                        d.label.toLowerCase().includes('rear')
+                    );
+                    if (backCam) {
+                        cameraSelect.value = backCam.id;
+                    }
+                } else {
+                    cameraSelect.innerHTML = '<option value="">Default Rear Camera</option>';
+                }
+            } catch (err) {
+                console.warn("Camera enum fallback", err);
+                cameraSelect.innerHTML = '<option value="">Default Camera</option>';
+            }
+        }
+
+        // Start Camera Handler
+        startCamBtn.addEventListener('click', async () => {
+            if (isScanning) return;
+
+            if (!html5QrCode) {
+                html5QrCode = new Html5Qrcode("reader");
+            }
+
+            const selectedCamId = cameraSelect.value;
+            let cameraConfig;
+
+            if (selectedCamId) {
+                cameraConfig = { deviceId: { exact: selectedCamId } };
+            } else {
+                cameraConfig = { facingMode: "environment" };
+            }
+
+            cameraErrorBox.classList.add('hidden');
+            cameraPlaceholder.classList.add('hidden');
+            scannerOverlay.classList.remove('hidden');
+            startCamBtn.disabled = true;
+            stopCamBtn.disabled = false;
+
+            const tryStartScanner = async (config) => {
+                return await html5QrCode.start(
+                    config,
+                    {
+                        fps: 15,
+                        qrbox: { width: 250, height: 150 },
+                        aspectRatio: 1.777778
+                    },
+                    (decodedText) => {
+                        handleScannedBarcode(decodedText);
+                    },
+                    () => {} // Suppress frame errors
+                );
+            };
+
+            try {
+                await tryStartScanner(cameraConfig);
+                isScanning = true;
+                showToast("Camera scanner active", "success");
+            } catch (err) {
+                console.warn("First scanner config failed, attempting fallback...", err);
+                try {
+                    // Fallback attempt with generic facingMode
+                    await tryStartScanner({ facingMode: "environment" });
+                    isScanning = true;
+                    showToast("Camera scanner active (Fallback mode)", "success");
+                } catch (fallbackErr) {
+                    console.error("Camera start error", fallbackErr);
+                    showCameraError("Failed to start camera. Click 'Request Camera Permission' first or ensure iframe camera access is allowed.");
+                    stopCamera();
+                }
+            }
+        });
+
+        // Stop Camera Handler
+        async function stopCamera() {
+            if (html5QrCode && isScanning) {
+                try {
+                    await html5QrCode.stop();
+                } catch (e) {
+                    console.warn("Camera stop error", e);
+                }
+            }
+            isScanning = false;
+            cameraPlaceholder.classList.remove('hidden');
+            scannerOverlay.classList.add('hidden');
+            startCamBtn.disabled = false;
+            stopCamBtn.disabled = true;
+        }
+
+        stopCamBtn.addEventListener('click', stopCamera);
+
+        // Manual Input Submit
+        manualForm.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const code = manualInput.value.trim();
+            if (code) {
+                handleScannedBarcode(code);
+                manualInput.value = '';
+                manualInput.focus();
+            }
+        });
+
+        // Sync to Google Sheets API
+        syncNowBtn.addEventListener('click', async () => {
+            if (!endpointUrl) {
+                showToast("Please configure Google Apps Script URL first", "error");
+                settingsModal.classList.remove('hidden');
+                return;
+            }
+
+            if (inventory.length === 0) {
+                showToast("Inventory is empty", "info");
+                return;
+            }
+
+            statusDot.className = "w-2 h-2 rounded-full bg-yellow-400 animate-pulse";
+            statusText.textContent = "Syncing...";
+
+            try {
+                await fetch(endpointUrl, {
+                    method: 'POST',
+                    mode: 'no-cors',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ items: inventory })
+                });
+
+                statusDot.className = "w-2 h-2 rounded-full bg-emerald-400";
+                statusText.textContent = "Synced";
+                lastSyncedTime.textContent = `Last Sync: ${new Date().toLocaleTimeString()}`;
+                showToast("Pushed batch to Google Sheets!", "success");
+
+            } catch (error) {
+                console.error("Sync error", error);
+                statusDot.className = "w-2 h-2 rounded-full bg-red-400";
+                statusText.textContent = "Error";
+                showToast("Failed to push data to Google Sheets", "error");
+            }
+        });
+
+        // Export CSV
+        exportCsvBtn.addEventListener('click', () => {
+            if (inventory.length === 0) {
+                showToast("No data available to export", "info");
+                return;
+            }
+
+            let csvContent = "data:text/csv;charset=utf-8,Barcode,Title,Quantity,LastScannedTime\n";
+            inventory.forEach(item => {
+                const titleEscaped = `"${item.title.replace(/"/g, '""')}"`;
+                csvContent += `${item.barcode},${titleEscaped},${item.quantity},${item.lastScanned}\n`;
+            });
+
+            const encodedUri = encodeURI(csvContent);
+            const link = document.createElement("a");
+            link.setAttribute("href", encodedUri);
+            link.setAttribute("download", `Manga_Stock_${new Date().toISOString().slice(0,10)}.csv`);
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+
+            showToast("CSV file downloaded", "success");
+        });
+
+        // Clear List
+        clearListBtn.addEventListener('click', () => {
+            if (inventory.length === 0) return;
+            if (confirm("Are you sure you want to clear the local scanned batch list?")) {
+                inventory = [];
+                saveInventory();
+                renderInventoryTable();
+                recentBanner.classList.add('hidden');
+                showToast("Inventory batch cleared", "info");
+            }
+        });
+
+        // Audio Toggle
+        audioToggleBtn.addEventListener('click', () => {
+            audioEnabled = !audioEnabled;
+            if (audioEnabled) {
+                audioIcon.className = "fa-solid fa-volume-high text-emerald-400";
+                showToast("Audio feedback enabled", "info");
+            } else {
+                audioIcon.className = "fa-solid fa-volume-xmark text-slate-400";
+                showToast("Audio feedback muted", "info");
+            }
+        });
+
+        // Modal Handlers
+        openSettingsBtn.addEventListener('click', () => settingsModal.classList.remove('hidden'));
+        closeSettingsBtn.addEventListener('click', () => settingsModal.classList.add('hidden'));
+        saveSettingsBtn.addEventListener('click', () => {
+            endpointUrl = endpointUrlInput.value.trim();
+            localStorage.setItem('manga_scanner_endpoint', endpointUrl);
+            updateConfigIndicator();
+            settingsModal.classList.add('hidden');
+            showToast("Google Sheets endpoint saved!", "success");
+        });
+
+        // Toast Utility
+        function showToast(message, type = 'info') {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toastMsg');
+            const toastIcon = document.getElementById('toastIcon');
+
+            toastMsg.textContent = message;
+
+            if (type === 'success') {
+                toastIcon.className = 'fa-solid fa-circle-check text-emerald-400';
+            } else if (type === 'error') {
+                toastIcon.className = 'fa-solid fa-circle-exclamation text-red-400';
+            } else {
+                toastIcon.className = 'fa-solid fa-circle-info text-indigo-400';
+            }
+
+            toast.classList.remove('translate-y-20', 'opacity-0', 'pointer-events-none');
+            
+            setTimeout(() => {
+                toast.classList.add('translate-y-20', 'opacity-0', 'pointer-events-none');
+            }, 3000);
+        }
+
+        function escapeHtml(str) {
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+    </script>
+</body>
+</html>
